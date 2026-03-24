@@ -301,3 +301,7 @@ bun run skill:check     # health dashboard for all skills
 MIT. Forked from [gstack](https://github.com/garrytan/gstack) by [Garry Tan](https://x.com/garrytan).
 
 Go build something.
+
+## Links
+
+[\![Hypercommit](https://img.shields.io/badge/Hypercommit-DB2475)](https://hypercommit.com/ostack)
