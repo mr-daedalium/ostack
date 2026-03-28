@@ -1,0 +1,271 @@
+---
+name: proof
+version: 1.0.0
+description: |
+  Anchor agent decisions on the MultiversX blockchain before and after execution.
+  Two-phase audit trail: certify the intent (WHY) before acting, certify the diff (WHAT) after.
+  4W framework — WHO: Claude Code / ostack, WHAT: SHA-256 of decision or git diff,
+  WHEN: immutable on-chain timestamp, WHY: action description and risk summary.
+  Use before /ship, before any destructive operation (delete, major refactor, deploy),
+  and after completing high-risk changes. Free trial: 10 certifications, no wallet needed.
+  Proactively suggest before /ship and before any irreversible action.
+allowed-tools:
+  - Bash
+  - Read
+  - AskUserQuestion
+---
+
+{{PREAMBLE}}
+
+# xProof: Agent Decision Anchoring
+
+Anchor what your agent *decided* and what it *did* — on the MultiversX blockchain.
+Two API calls. Two proofs. One immutable audit trail anyone can verify at xproof.app.
+
+**The rule:** Before a critical action → anchor the *intent* (WHY). After → anchor the *result* (WHAT).
+
+---
+
+## Setup
+
+```bash
+echo ${XPROOF_API_KEY:+"XPROOF_READY"}
+```
+
+If blank: tell the user to get a free API key at **xproof.app** (10 certifications, no wallet, no credit card)
+and set `XPROOF_API_KEY=pm_...` in their shell environment.
+
+If `XPROOF_READY`: proceed to Phase 1.
+
+---
+
+## Phase 1 — BEFORE: Certify the Intent (WHY)
+
+Call this before any critical action. Anchors the decision and timestamps the intent on-chain.
+
+**Step 1 — Capture context:**
+
+```bash
+_BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
+_RECENT_LOG=$(git log --oneline -5 2>/dev/null || echo "no-git")
+_DIFF_STAT=$(git diff --cached --stat 2>/dev/null || git diff HEAD --stat 2>/dev/null || echo "no-diff")
+_TODOS=$(cat TODOS.md 2>/dev/null | head -20 || echo "")
+_SESSION_ID="ostack-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+_OSTACK_VERSION=$(cat ~/.claude/skills/ostack/VERSION 2>/dev/null || cat .claude/skills/ostack/VERSION 2>/dev/null || echo "unknown")
+```
+
+**Step 2 — Build the inputs hash** (what you analyzed before deciding):
+
+```bash
+_INPUTS_RAW=$(printf '%s\n%s\n%s\n%s\n%s' \
+  "$_BRANCH" \
+  "$_RECENT_LOG" \
+  "$_DIFF_STAT" \
+  "$_TODOS" \
+  "${ACTION_DESCRIPTION}")
+_INPUTS_HASH=$(printf '%s' "$_INPUTS_RAW" | sha256sum | cut -d' ' -f1)
+```
+
+**Step 3 — Determine action_type** from what Claude Code is about to do:
+
+| Situation | action_type |
+|-----------|-------------|
+| /ship, push, merge, deploy | `code_deploy` |
+| delete files, drop table, rm -rf | `data_access` |
+| refactor, rename, restructure | `other` |
+| generate content, write docs | `content_generation` |
+| call external API | `api_call` |
+
+**Step 4 — Assess risk_level:**
+
+| Signal | risk_level |
+|--------|-----------|
+| Config, docs, README only | `low` |
+| Feature code, tests | `medium` |
+| Auth, payments, migrations, infra | `high` |
+| Production deploy, data deletion, irreversible | `critical` |
+
+**Step 5 — Certify the intent:**
+
+```bash
+_RESPONSE=$(curl -s -X POST https://xproof.app/api/audit \
+  -H "Authorization: Bearer $XPROOF_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"agent_id\": \"claude-code-ostack\",
+    \"session_id\": \"$_SESSION_ID\",
+    \"action_type\": \"${ACTION_TYPE}\",
+    \"action_description\": \"${ACTION_DESCRIPTION}\",
+    \"inputs_hash\": \"$_INPUTS_HASH\",
+    \"inputs_manifest\": {
+      \"fields\": [\"git_branch\", \"recent_commits\", \"diff_stat\", \"todos\", \"user_intent\"],
+      \"sources\": [\"git\", \"TODOS.md\", \"user_prompt\"],
+      \"hash_method\": \"SHA-256 over concatenated newline-delimited fields\"
+    },
+    \"risk_level\": \"${RISK_LEVEL}\",
+    \"risk_summary\": \"${RISK_SUMMARY}\",
+    \"decision\": \"approved\",
+    \"timestamp\": \"$_TIMESTAMP\",
+    \"context\": {
+      \"branch\": \"$_BRANCH\",
+      \"ostack_version\": \"$_OSTACK_VERSION\",
+      \"agent\": \"claude-code\",
+      \"tool\": \"ostack\"
+    }
+  }")
+
+_PROOF_BEFORE=$(echo "$_RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('proof_id','ERROR'))" 2>/dev/null)
+_AUDIT_URL=$(echo "$_RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('audit_url',''))" 2>/dev/null)
+_TX=$(echo "$_RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); b=d.get('blockchain',{}); print(b.get('explorer_url',''))" 2>/dev/null)
+```
+
+**Step 6 — Store and report:**
+
+```bash
+mkdir -p ~/.ostack/proofs
+echo "$_SESSION_ID $_PROOF_BEFORE $_AUDIT_URL" >> ~/.ostack/proofs/proof-log.txt
+```
+
+Tell the user:
+
+```
+✓ Intent anchored on MultiversX
+  WHO:  claude-code-ostack
+  WHAT: inputs_hash $_INPUTS_HASH
+  WHEN: $_TIMESTAMP
+  WHY:  ${ACTION_DESCRIPTION}
+
+  proof_before: $_PROOF_BEFORE
+  audit:        $_AUDIT_URL
+  blockchain:   $_TX
+```
+
+If `_PROOF_BEFORE` is `ERROR`: show the raw `$_RESPONSE` and stop. Do not proceed.
+
+---
+
+## Phase 2 — AFTER: Certify the Result (WHAT)
+
+Call this after the action completes. Anchors the git diff — proof of what actually changed.
+
+**Step 1 — Hash the diff:**
+
+```bash
+_DIFF=$(git diff HEAD~1 2>/dev/null || git diff 2>/dev/null || echo "no-diff")
+_DIFF_HASH=$(printf '%s' "$_DIFF" | sha256sum | cut -d' ' -f1)
+_DIFF_LINES=$(echo "$_DIFF" | wc -l | tr -d ' ')
+```
+
+**Step 2 — Certify the result:**
+
+```bash
+_RESPONSE_AFTER=$(curl -s -X POST https://xproof.app/api/proof \
+  -H "Authorization: Bearer $XPROOF_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"file_hash\": \"$_DIFF_HASH\",
+    \"filename\": \"git-diff-$_SESSION_ID.patch\",
+    \"author_name\": \"claude-code-ostack\"
+  }")
+
+_PROOF_AFTER=$(echo "$_RESPONSE_AFTER" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('proof_id','ERROR'))" 2>/dev/null)
+_VERIFY_URL=$(echo "$_RESPONSE_AFTER" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('verify_url',''))" 2>/dev/null)
+```
+
+**Step 3 — Report the complete audit trail:**
+
+```
+✓ Result anchored on MultiversX
+  WHAT: git diff — $_DIFF_LINES lines changed
+  hash: $_DIFF_HASH
+
+  proof_after: $_PROOF_AFTER
+  verify:      $_VERIFY_URL
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AUDIT TRAIL (immutable, publicly verifiable)
+  Intent (WHY): $_AUDIT_URL
+  Result (WHAT): $_VERIFY_URL
+  Both proofs on MultiversX blockchain.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+Include both URLs in the PR description.
+
+---
+
+## Verify a Proof
+
+```bash
+curl -s https://xproof.app/api/proof/$PROOF_ID | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print('File:    ', d.get('fileName',''))
+print('Hash:    ', d.get('fileHash',''))
+print('Anchored:', d.get('createdAt',''))
+b = d.get('blockchain', {})
+print('Network: ', b.get('network', 'MultiversX'))
+print('TX:      ', b.get('explorer_url',''))
+print('Verify:  ', d.get('verify_url',''))
+"
+```
+
+---
+
+## MCP Integration (Alternative to curl)
+
+If Claude Code is configured with the xProof MCP server, use the native tools instead of curl:
+
+```json
+{
+  "mcpServers": {
+    "xproof": {
+      "type": "http",
+      "url": "https://xproof.app/mcp",
+      "headers": {
+        "Authorization": "Bearer ${XPROOF_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+Add to `~/.claude.json` (Claude Code global config). Then Claude Code can call:
+- `mcp__xproof__audit_agent_session` — Phase 1 (intent)
+- `mcp__xproof__certify_file` — Phase 2 (result)
+- `mcp__xproof__verify_proof` — verify any proof
+- `mcp__xproof__get_proof` — retrieve proof details
+
+Schema: `https://xproof.app/.well-known/agent-audit-schema.json`
+
+---
+
+## /ship Integration
+
+Add `/proof` naturally into the ostack workflow:
+
+```
+/plan-eng-review        # architect review
+/proof --before "ship"  # anchor the intent → proof_before
+[/ship executes]        # push, PR, tests
+/proof --after          # anchor the diff → proof_after
+                        # paste both URLs in the PR body
+```
+
+The PR description becomes a tamper-proof receipt: anyone can verify what Claude Code decided to ship — and what it actually changed — directly on the MultiversX blockchain.
+
+---
+
+## Pricing
+
+| Tier | Certifications | Cost |
+|------|---------------|------|
+| Trial | 10 free | No wallet, no card |
+| Credits | 100 | $5 USDC on Base |
+| Credits | 1,000 | $40 USDC on Base |
+| Credits | 10,000 | $300 USDC on Base |
+| x402 | Pay-per-proof | USDC on Base, no account |
+
+API key format: `pm_...` — get one at **xproof.app**
+npm: `xproof` · pip: `xproof` · MCP: `https://xproof.app/mcp`
