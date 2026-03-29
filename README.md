@@ -6,7 +6,7 @@
  \___/|___/\__\__,_|\___|_|\_\
 ```
 
-### Your AI engineering team. One terminal. Zero meetings.
+### Your tool to build Empire using AI. One AI-agent at a time.
 
 ---
 
