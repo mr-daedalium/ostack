@@ -6,7 +6,7 @@
  \___/|___/\__\__,_|\___|_|\_\
 ```
 
-### Your tool to build Empire using AI. One AI-agent at a time.
+### Your tool to build an Empire using AI. One AI-agent at a time.
 
 ---
 
